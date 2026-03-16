@@ -14,7 +14,7 @@ class Tapcue < Formula
   depends_on "rust" => :build
 
   def install
-    system "cargo", "install", *std_cargo_args, "--locked"
+    system "cargo", "install", *std_cargo_args
 
     man1.install "docs/man/tapcue.1"
     (pkgshare/"tldr-pages/pages/common").install "docs/tldr/tapcue.md"
