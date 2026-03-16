@@ -1,0 +1,76 @@
+name: Auto Bump Formulae
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-formulae:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@fb0fe15d936a80ac0ba4c6cee691bc3da3f00f4e
+
+      - name: Tap current repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew tap --custom-remote techwizrd/tap "${GITHUB_WORKSPACE}"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump formulae from livecheck
+        shell: bash
+        run: |
+          set -euxo pipefail
+          shopt -s nullglob
+          formulae=(Formula/*.rb)
+          if [[ ${#formulae[@]} -eq 0 ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=0
+          for formula_path in "${formulae[@]}"; do
+            formula_name="$(basename "${formula_path}" .rb)"
+            qualified_name="techwizrd/tap/${formula_name}"
+            livecheck_json="$(brew livecheck --formula "${qualified_name}" --newer-only --json || true)"
+            latest_version="$(ruby -rjson -e 'payload = STDIN.read.strip; begin; data = payload.empty? ? [] : JSON.parse(payload); rescue JSON::ParserError; data = []; end; version = data.is_a?(Array) ? data.dig(0, "version", "latest") : nil; print(version.to_s)' <<< "${livecheck_json}")"
+
+            if [[ -n "${latest_version}" ]]; then
+              brew bump-formula-pr --write --no-browse --version "${latest_version}" "${qualified_name}"
+              changed=1
+            fi
+          done
+
+          if [[ "${changed}" -eq 1 ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+        id: bump
+
+      - name: Create pull request
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "chore: bump formula versions"
+          title: "chore: bump formula versions"
+          body: |
+            ## Summary
+            - update formula version metadata using `brew livecheck`
+            - apply changes using `brew bump-formula-pr --write`
+          branch: ci/bump-formulae
+          delete-branch: true
