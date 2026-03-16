@@ -33,6 +33,17 @@ brew uninstall tapcue
 - `Formula/`: Homebrew formula definitions.
 - `.github/workflows/`: CI checks for formula changes.
 - `.github/workflows/autobump.yml`: Scheduled formula version bump PRs.
+- `.github/workflows/bottles.yml`: Manual bottle build/publish workflow for this tap.
+
+## Bottles
+
+This tap can publish bottles to GitHub Releases in this repository.
+
+- Run the `Bottles` workflow from Actions (`workflow_dispatch`) and choose a formula name.
+- Bottle artifacts are uploaded to a release tag like `tapcue-0.1.0` in `techwizrd/homebrew-tap`.
+- The workflow then merges bottle checksums into the formula file.
+
+No bottle files need to be added to the upstream `techwizrd/tapcue` repository.
 
 ## Maintainers
 

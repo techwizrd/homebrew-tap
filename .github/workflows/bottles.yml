@@ -1,0 +1,145 @@
+name: Bottles
+
+on:
+  workflow_dispatch:
+    inputs:
+      formula:
+        description: Formula name in this tap
+        required: true
+        default: tapcue
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build bottle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-13
+          - macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Tap current repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew tap --custom-remote techwizrd/tap "${GITHUB_WORKSPACE}"
+
+      - name: Build and bottle formula
+        shell: bash
+        env:
+          FORMULA: ${{ inputs.formula }}
+        run: |
+          set -euxo pipefail
+          qualified="techwizrd/tap/${FORMULA}"
+          version="$(brew info --json=v2 "${qualified}" | ruby -rjson -e 'data = JSON.parse(STDIN.read); print(data.fetch("formulae").fetch(0).fetch("versions").fetch("stable"))')"
+          release_tag="${FORMULA}-${version}"
+
+          brew install --build-bottle "${qualified}"
+          brew test "${qualified}"
+          brew bottle --json --no-rebuild --root-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}" "${qualified}"
+
+          mkdir -p bottles
+          shopt -s nullglob
+          for artifact in ./*.bottle*.tar.gz ./*.json; do
+            mv "${artifact}" bottles/
+          done
+
+      - name: Upload bottle artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: bottles-${{ matrix.os }}
+          path: bottles/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish bottles and update formula
+    runs-on: macos-14
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Download bottle artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: bottles
+
+      - name: Tap current repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew tap --custom-remote techwizrd/tap "${GITHUB_WORKSPACE}"
+
+      - name: Publish bottle files to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORMULA: ${{ inputs.formula }}
+        run: |
+          set -euxo pipefail
+          qualified="techwizrd/tap/${FORMULA}"
+          version="$(brew info --json=v2 "${qualified}" | ruby -rjson -e 'data = JSON.parse(STDIN.read); print(data.fetch("formulae").fetch(0).fetch("versions").fetch("stable"))')"
+          release_tag="${FORMULA}-${version}"
+
+          if ! gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release create "${release_tag}" --title "${FORMULA} ${version}" --notes "Homebrew bottles for ${FORMULA} ${version}."
+          fi
+
+          shopt -s globstar nullglob
+          files=(bottles/**/*.bottle*.tar.gz)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No bottle tarballs found."
+            exit 1
+          fi
+          gh release upload "${release_tag}" "${files[@]}" --clobber
+
+      - name: Merge bottle metadata into formula
+        shell: bash
+        run: |
+          set -euxo pipefail
+          shopt -s globstar nullglob
+          json_files=(bottles/**/*.json)
+          if [[ ${#json_files[@]} -eq 0 ]]; then
+            echo "No bottle JSON files found."
+            exit 1
+          fi
+
+          brew bottle --merge --write --no-commit "${json_files[@]}"
+
+      - name: Commit bottle block update
+        shell: bash
+        env:
+          FORMULA: ${{ inputs.formula }}
+        run: |
+          set -euxo pipefail
+          if git diff --quiet -- "Formula/${FORMULA}.rb"; then
+            echo "No formula changes to commit."
+            exit 0
+          fi
+
+          version="$(ruby -rjson -e 'f = JSON.parse(`brew info --json=v2 techwizrd/tap/${ENV.fetch("FORMULA")}`); print(f.fetch("formulae").fetch(0).fetch("versions").fetch("stable"))')"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "Formula/${FORMULA}.rb"
+          git commit -m "chore: add ${FORMULA} ${version} bottle checksums"
+          git push

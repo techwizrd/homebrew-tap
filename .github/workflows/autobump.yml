@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@fb0fe15d936a80ac0ba4c6cee691bc3da3f00f4e
+        uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
 
       - name: Tap current repository
         shell: bash
@@ -64,7 +64,7 @@ jobs:
 
       - name: Create pull request
         if: steps.bump.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@v8.1.0
         with:
           commit-message: "chore: bump formula versions"
           title: "chore: bump formula versions"
