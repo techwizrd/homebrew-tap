@@ -6,26 +6,31 @@ Official Homebrew tap for formulae maintained by [Kunal K. Sarkhel](https://gith
 
 ```bash
 brew tap techwizrd/tap
-brew install tapcue
+brew install fishmarks
 ```
+
+Available formulae:
+
+- `fishmarks`
+- `tapcue`
 
 Or install directly without tapping first:
 
 ```bash
-brew install techwizrd/tap/tapcue
+brew install techwizrd/tap/fishmarks
 ```
 
 ## Upgrade
 
 ```bash
 brew update
-brew upgrade tapcue
+brew upgrade fishmarks
 ```
 
 ## Uninstall
 
 ```bash
-brew uninstall tapcue
+brew uninstall fishmarks
 ```
 
 ## Repository layout
