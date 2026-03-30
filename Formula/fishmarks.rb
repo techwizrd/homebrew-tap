@@ -2,7 +2,7 @@ class Fishmarks < Formula
   desc "Directory bookmarks for Fish shell"
   homepage "https://github.com/techwizrd/fishmarks"
   url "https://github.com/techwizrd/fishmarks/archive/refs/tags/v1.1.tar.gz"
-  sha256 "4f71760df94c743b23e8fe4bf13c22935da0d9d2186d02138eab6f1d58bd5604"
+  sha256 "62264f83f71d0a46c73af9846be143d60280664e4e0d004aa1bcc0a239605f40"
   license "Apache-2.0"
   head "https://github.com/techwizrd/fishmarks.git", branch: "master"
 
