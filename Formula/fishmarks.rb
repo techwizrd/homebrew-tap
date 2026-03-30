@@ -19,6 +19,22 @@ class Fishmarks < Formula
     (share/"fish/vendor_conf.d").install "conf.d/fishmarks.fish"
   end
 
+  def caveats
+    <<~EOS
+      fishmarks stores bookmarks in ~/.sdirs.
+
+      `brew uninstall techwizrd/tap/fishmarks` removes only Homebrew-managed plugin files.
+      Your bookmarks are kept by default.
+
+      Optional full cleanup:
+        rm -f ~/.sdirs
+        rm -f ~/.config/fish/conf.d/fishmarks.fish
+
+      If you previously used a manual clone install:
+        rm -rf ~/.fishmarks
+    EOS
+  end
+
   test do
     fish = Formula["fish"].opt_bin/"fish"
 
