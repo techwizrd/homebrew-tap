@@ -22,7 +22,8 @@ class Fishmarks < Formula
   test do
     fish = Formula["fish"].opt_bin/"fish"
 
-    assert_equal "ok", shell_output("#{fish} -c 'type -q save_bookmark; and type -q go_to_bookmark; and type -q fishmarks_version; and echo ok'").strip
+    check = "type -q save_bookmark; and type -q go_to_bookmark; and type -q fishmarks_version; and echo ok"
+    assert_equal "ok", shell_output("#{fish} -c '#{check}'").strip
 
     system fish, "-c", <<~FISH
       set -gx SDIRS "#{testpath}/.sdirs"
