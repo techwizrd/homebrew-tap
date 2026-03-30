@@ -9,19 +9,24 @@ on:
         default: tapcue
         type: string
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ inputs.formula }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     name: Build bottle (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os:
-          - macos-13
           - macos-14
+          - macos-15
 
     steps:
       - name: Checkout
@@ -29,6 +34,15 @@ jobs:
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Restore Homebrew cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-${{ runner.os }}-bottles-${{ inputs.formula }}-${{ hashFiles(format('Formula/{0}.rb', inputs.formula)) }}
+          restore-keys: |
+            homebrew-${{ runner.os }}-bottles-${{ inputs.formula }}-
+            homebrew-${{ runner.os }}-
 
       - name: Tap current repository
         shell: bash
@@ -62,11 +76,24 @@ jobs:
           name: bottles-${{ matrix.os }}
           path: bottles/*
           if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Homebrew logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bottles-build-logs-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ~/Library/Logs/Homebrew/**
+          if-no-files-found: ignore
+          compression-level: 0
 
   publish:
     name: Publish bottles and update formula
     runs-on: macos-14
+    timeout-minutes: 30
     needs: build
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -76,6 +103,15 @@ jobs:
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Restore Homebrew cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-${{ runner.os }}-bottles-publish-${{ inputs.formula }}-${{ hashFiles(format('Formula/{0}.rb', inputs.formula)) }}
+          restore-keys: |
+            homebrew-${{ runner.os }}-bottles-publish-${{ inputs.formula }}-
+            homebrew-${{ runner.os }}-
 
       - name: Download bottle artifacts
         uses: actions/download-artifact@v8
@@ -135,7 +171,7 @@ jobs:
             exit 0
           fi
 
-          version="$(ruby -rjson -e 'f = JSON.parse(`brew info --json=v2 techwizrd/tap/${ENV.fetch("FORMULA")}`); print(f.fetch("formulae").fetch(0).fetch("versions").fetch("stable"))')"
+          version="$(FORMULA="${FORMULA}" ruby -rjson -e 'f = JSON.parse(%x[brew info --json=v2 techwizrd/tap/#{ENV.fetch("FORMULA")}]); print(f.fetch("formulae").fetch(0).fetch("versions").fetch("stable"))')"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -143,3 +179,12 @@ jobs:
           git add "Formula/${FORMULA}.rb"
           git commit -m "chore: add ${FORMULA} ${version} bottle checksums"
           git push
+
+      - name: Upload Homebrew logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bottles-publish-logs-${{ github.run_attempt }}
+          path: ~/Library/Logs/Homebrew/**
+          if-no-files-found: ignore
+          compression-level: 0

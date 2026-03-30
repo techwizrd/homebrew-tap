@@ -5,13 +5,20 @@ on:
   schedule:
     - cron: "0 7 * * 1"
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump-formulae:
     runs-on: macos-14
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -19,6 +26,15 @@ jobs:
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Restore Homebrew cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-${{ runner.os }}-autobump-${{ hashFiles('Formula/*.rb') }}
+          restore-keys: |
+            homebrew-${{ runner.os }}-autobump-
+            homebrew-${{ runner.os }}-
 
       - name: Tap current repository
         shell: bash
@@ -74,3 +90,12 @@ jobs:
             - apply changes using `brew bump-formula-pr --write`
           branch: ci/bump-formulae
           delete-branch: true
+
+      - name: Upload Homebrew logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: autobump-logs-${{ github.run_attempt }}
+          path: ~/Library/Logs/Homebrew/**
+          if-no-files-found: ignore
+          compression-level: 0

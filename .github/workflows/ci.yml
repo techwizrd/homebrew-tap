@@ -1,14 +1,110 @@
 name: CI
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * *"
   push:
     branches:
       - main
+    paths:
+      - Formula/**
+      - .github/workflows/ci.yml
   pull_request:
+    paths:
+      - Formula/**
+      - .github/workflows/ci.yml
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test-formulae:
+  determine-formulae:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      formulae_json: ${{ steps.formulae.outputs.formulae_json }}
+      has_formulae: ${{ steps.formulae.outputs.has_formulae }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed formula files
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        id: changed-formulae
+        uses: tj-actions/changed-files@v47
+        with:
+          files: |
+            Formula/*.rb
+          separator: "\n"
+
+      - name: Detect CI workflow changes
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        id: changed-ci
+        uses: tj-actions/changed-files@v47
+        with:
+          files: |
+            .github/workflows/ci.yml
+
+      - name: Determine formulae to test
+        id: formulae
+        shell: bash
+        env:
+          CHANGED_FORMULAE: ${{ steps.changed-formulae.outputs.all_changed_files }}
+        run: |
+          set -euxo pipefail
+          shopt -s nullglob
+
+          formula_names=()
+          formula_paths=()
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            formula_paths=(Formula/*.rb)
+          elif [[ "${{ steps.changed-ci.outputs.any_changed || 'false' }}" == "true" ]]; then
+            formula_paths=(Formula/*.rb)
+          elif [[ "${{ steps.changed-formulae.outputs.any_changed || 'false' }}" == "true" ]]; then
+            while IFS= read -r formula_path; do
+              formula_paths+=("${formula_path}")
+            done < <(printf '%s\n' "${CHANGED_FORMULAE}")
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            formula_paths=(Formula/*.rb)
+          else
+            formula_paths=()
+          fi
+
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ steps.changed-ci.outputs.any_changed || 'false' }}" == "true" ]]; then
+            if [[ ${#formula_paths[@]} -eq 0 ]]; then
+              formula_paths=(Formula/*.rb)
+            fi
+          fi
+
+          for formula_path in "${formula_paths[@]}"; do
+            if [[ -f "${formula_path}" ]]; then
+              formula_name="$(basename "${formula_path}" .rb)"
+              formula_names+=("${formula_name}")
+            fi
+          done
+
+          formulae_json="$(printf '%s\n' "${formula_names[@]}" | ruby -rjson -e 'values = STDIN.read.lines.map(&:strip).reject(&:empty?); print(JSON.generate(values))')"
+          echo "formulae_json=${formulae_json}" >> "$GITHUB_OUTPUT"
+
+          if [[ ${#formula_names[@]} -eq 0 ]]; then
+            echo "has_formulae=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_formulae=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  style-audit:
     runs-on: macos-14
+    timeout-minutes: 20
+    needs: determine-formulae
+    if: needs.determine-formulae.outputs.has_formulae == 'true'
 
     steps:
       - name: Checkout
@@ -16,6 +112,15 @@ jobs:
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Restore Homebrew cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-${{ runner.os }}-style-${{ hashFiles('Formula/*.rb') }}
+          restore-keys: |
+            homebrew-${{ runner.os }}-style-
+            homebrew-${{ runner.os }}-
 
       - name: Tap current repository
         shell: bash
@@ -25,33 +130,81 @@ jobs:
 
       - name: Style and audit formulae
         shell: bash
+        env:
+          FORMULAE_JSON: ${{ needs.determine-formulae.outputs.formulae_json }}
         run: |
           set -euxo pipefail
-          shopt -s nullglob
-          formulae=(Formula/*.rb)
-          if [[ ${#formulae[@]} -eq 0 ]]; then
-            exit 0
-          fi
 
-          brew style Formula/*.rb
-          for formula_path in "${formulae[@]}"; do
-            formula_name="$(basename "${formula_path}" .rb)"
+          mapfile -t formulae < <(ruby -rjson -e 'JSON.parse(ARGV.fetch(0)).each { |name| puts(name) }' "${FORMULAE_JSON}")
+          formula_paths=()
+          for formula_name in "${formulae[@]}"; do
+            formula_paths+=("Formula/${formula_name}.rb")
+          done
+
+          brew style "${formula_paths[@]}"
+          for formula_name in "${formulae[@]}"; do
             brew audit --strict --online --formula "techwizrd/tap/${formula_name}"
           done
 
-      - name: Build and test formulae
+      - name: Upload Homebrew logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-style-audit-logs-${{ github.run_attempt }}
+          path: ~/Library/Logs/Homebrew/**
+          if-no-files-found: ignore
+          compression-level: 0
+
+  build-test:
+    runs-on: macos-14
+    timeout-minutes: 30
+    needs:
+      - determine-formulae
+      - style-audit
+    if: needs.determine-formulae.outputs.has_formulae == 'true'
+    strategy:
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        formula: ${{ fromJson(needs.determine-formulae.outputs.formulae_json) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a1528af360da5025906c3797968e675f21647949
+
+      - name: Restore Homebrew cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-${{ runner.os }}-${{ matrix.formula }}-${{ hashFiles(format('Formula/{0}.rb', matrix.formula)) }}
+          restore-keys: |
+            homebrew-${{ runner.os }}-${{ matrix.formula }}-
+            homebrew-${{ runner.os }}-
+
+      - name: Tap current repository
         shell: bash
         run: |
           set -euxo pipefail
-          shopt -s nullglob
-          formulae=(Formula/*.rb)
-          if [[ ${#formulae[@]} -eq 0 ]]; then
-            exit 0
-          fi
+          brew tap --custom-remote techwizrd/tap "${GITHUB_WORKSPACE}"
 
-          for formula_path in "${formulae[@]}"; do
-            formula_name="$(basename "${formula_path}" .rb)"
-            brew install --build-from-source "techwizrd/tap/${formula_name}"
-            brew test "techwizrd/tap/${formula_name}"
-            brew uninstall --force "techwizrd/tap/${formula_name}"
-          done
+      - name: Build and test formula
+        shell: bash
+        env:
+          FORMULA: ${{ matrix.formula }}
+        run: |
+          set -euxo pipefail
+          brew install --build-from-source "techwizrd/tap/${FORMULA}"
+          brew test "techwizrd/tap/${FORMULA}"
+          brew uninstall --force "techwizrd/tap/${FORMULA}"
+
+      - name: Upload Homebrew logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-build-test-logs-${{ matrix.formula }}-${{ github.run_attempt }}
+          path: ~/Library/Logs/Homebrew/**
+          if-no-files-found: ignore
+          compression-level: 0
