@@ -63,3 +63,5 @@ When updating a formula:
 4. Open a pull request.
 
 This repository includes `.pre-commit-config.yaml` with general linting plus Homebrew-specific checks. The `brew audit` hook mirrors your local `Formula/*.rb` files into a local `techwizrd/local` tap before auditing, so `prek run --all-files` works on uncommitted changes.
+
+Workflow linting also includes a macOS Bash compatibility guard for GitHub Actions. Avoid Bash 4+ builtins such as `mapfile` and `readarray` in workflow `run:` blocks because `shell: bash` on GitHub macOS runners uses Bash 3.2.

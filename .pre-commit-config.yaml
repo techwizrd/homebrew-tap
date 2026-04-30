@@ -21,6 +21,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: github-actions-macos-bash-compat
+        name: GitHub Actions macOS Bash compatibility
+        entry: >-
+          bash -c 'set -euo pipefail; if grep -RInE "\b(mapfile|readarray)\b" .github/workflows --include "*.yml" --include "*.yaml"; then printf "%s\n" "GitHub macOS runners use Bash 3.2 for shell: bash; avoid mapfile/readarray in workflows."; exit 1; fi'
+        language: system
+        pass_filenames: false
+
       - id: brew-style
         name: brew style Formula
         entry: bash -c 'set -euo pipefail; brew_bin="$(command -v brew || true)"; if [[ -z "$brew_bin" ]]; then brew_bin="/home/linuxbrew/.linuxbrew/bin/brew"; fi; "$brew_bin" style Formula/*.rb'

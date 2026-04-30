@@ -135,7 +135,10 @@ jobs:
         run: |
           set -euxo pipefail
 
-          mapfile -t formulae < <(ruby -rjson -e 'JSON.parse(ARGV.fetch(0)).each { |name| puts(name) }' "${FORMULAE_JSON}")
+          formulae=()
+          while IFS= read -r formula_name; do
+            formulae+=("${formula_name}")
+          done < <(ruby -rjson -e 'JSON.parse(ARGV.fetch(0)).each { |name| puts(name) }' "${FORMULAE_JSON}")
           formula_paths=()
           for formula_name in "${formulae[@]}"; do
             formula_paths+=("Formula/${formula_name}.rb")
